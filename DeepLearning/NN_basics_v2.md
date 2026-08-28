@@ -311,10 +311,8 @@ A bias shifts a neuron’s pre-activation equally for every example. Its gradien
 
 
 
-This is the step that makes it "back-propagation" — it computes the error term for the *previous* layer using the current layer's error.
-- $(W^l)^T dZ^l$: pushes the error backward through the weights (redistributing blame to the previous layer's neurons, weighted by how strongly they were connected)
-- $\cdot\, g'(Z^{l-1})$: element-wise multiplies by the derivative of the previous layer's activation function, since if that neuron's activation function was flat (near-zero slope) at that point, changing $Z^{l-1}$ wouldn't have changed the output much, so it shouldn't get much blame either  
-  
+This is the step that makes it "back-propagation" — it computes the gradient for the *previous* layer using the current layer's gradient. Strictly speaking, $dZ^l$ is a gradient or sensitivity signal, not simply the numerical difference between a prediction and its target.
+
 To propagate from layer $l$ into hidden layer $l-1$:
 
 $$
@@ -347,7 +345,48 @@ dA^{l-1} = (W^l)^T dZ^l
 }
 $$
 
-The transposed weight matrix distributes the current layer’s error backward through its connections.
+The transposed weight matrix distributes the current layer’s gradient backward through its connections.
+
+### Why are multiple weights and error signals combined?
+
+Consider one neuron $i$ in layer $l-1$. In forward propagation, its activation contributes to every neuron $j$ in layer $l$:
+
+$$
+Z_j^l = \sum_k W_{jk}^l A_k^{l-1} + b_j^l
+$$
+
+Therefore, changing $A_i^{l-1}$ can affect the loss through several different neurons in layer $l$. The multivariable chain rule gives:
+
+$$
+\boxed{
+dA_i^{l-1}
+=
+\sum_{j=1}^{n_l} W_{ji}^l\,dZ_j^l
+}
+$$
+
+Each product $W_{ji}^l dZ_j^l$ represents one backward path:
+
+$$
+A_i^{l-1} \longrightarrow Z_j^l \longrightarrow \mathcal{L}
+$$
+
+- $dZ_j^l = \frac{\partial \mathcal{L}}{\partial Z_j^l}$ says how sensitive the loss is to neuron $j$ in layer $l$.
+- $W_{ji}^l = \frac{\partial Z_j^l}{\partial A_i^{l-1}}$ says how strongly neuron $i$ in layer $l-1$ affects that neuron.
+- Their product is the loss sensitivity sent backward along that connection.
+- The products are added because neuron $i$ affects the loss through all of its outgoing connections. Positive and negative contributions may reinforce or cancel one another.
+
+For example, suppose a neuron in layer $l-1$ has weights $0.7$, $-0.2$, and $0.5$ to three neurons in layer $l$, whose error signals are $0.4$, $-0.3$, and $0.2$. Then:
+
+$$
+dA_i^{l-1}
+=
+(0.7)(0.4)+(-0.2)(-0.3)+(0.5)(0.2)
+=
+0.44
+$$
+
+Thus, $0.44$ is the combined sensitivity of the loss to the output of that neuron. The matrix expression $(W^l)^T dZ^l$ performs these weighted sums for every neuron and every training example at once. The transpose appears because the forward mapping goes from $n_{l-1}$ neurons to $n_l$ neurons, while the gradient must travel from $n_l$ back to $n_{l-1}$.
 
 ### Step B: Propagate through the activation
 
@@ -370,6 +409,42 @@ g^{(l-1)\,\prime}(Z^{l-1})
 $$
 
 Substituting Step A into Step B gives the combined equation above.
+
+### Why multiply element by element by the activation derivative?
+
+After Step A, $dA_i^{l-1}$ measures sensitivity with respect to the neuron's **output**:
+
+$$
+dA_i^{l-1}
+=
+\frac{\partial \mathcal{L}}{\partial A_i^{l-1}}
+$$
+
+To continue backpropagation, we need sensitivity with respect to its **pre-activation**:
+
+$$
+dZ_i^{l-1}
+=
+\frac{\partial \mathcal{L}}{\partial Z_i^{l-1}}
+$$
+
+Because $A_i^{l-1}=g^{l-1}(Z_i^{l-1})$, the chain rule gives:
+
+$$
+dZ_i^{l-1}
+=
+dA_i^{l-1}\,g^{(l-1)\,\prime}(Z_i^{l-1})
+$$
+
+Standard activation functions are applied independently to each neuron. Therefore, each neuron's derivative scales only that same neuron's incoming gradient, which is why this is an element-wise multiplication rather than a matrix multiplication.
+
+The activation derivative acts like a local gradient gate:
+
+- A large derivative allows the incoming gradient to pass through strongly.
+- A small derivative reduces it.
+- A zero derivative blocks it.
+
+For example, if $dA_i^{l-1}=0.44$, a ReLU derivative of $1$ produces $dZ_i^{l-1}=0.44$, while a ReLU derivative of $0$ produces $dZ_i^{l-1}=0$. A sigmoid derivative of $0.1$ would produce $dZ_i^{l-1}=0.044$.
 
 ### Shape check
 
