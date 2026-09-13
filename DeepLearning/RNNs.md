@@ -11,23 +11,30 @@ A tutorial covering the core mechanics of a vanilla RNN: notation, the forward p
 | $T_x$ | Length of the input sequence |
 | $T_y$ | Length of the output sequence |
 | $x^{\langle i \rangle \langle t \rangle}$ | Input at time step $t$, for training example $i$ |
-| $y^{\langle i \rangle \langle t \rangle}$ | Output at time step $t$, for training example $i$ |
+| $y^{\langle i \rangle \langle t \rangle}$ | True target at time step $t$, for training example $i$ |
+| $\hat{y}^{\langle t \rangle}$ | Model prediction at time step $t$ |
 | $n_x$ | Dimension of the input $x$ |
 | $n_h$ | Dimension of the hidden layer (hidden state) |
 | $n_y$ | Dimension of the output $y$ |
 | $a^{\langle t \rangle}$ | Hidden (activation) state at time step $t$ |
-| $a_0$ | Initial hidden state — a vector of zeros |
+| $a_0$ | Initial hidden state — usually a vector of zeros |
 
 ### Weight matrices
 
-An RNN cell has three weight matrices:
+For one training example, the vectors entering or leaving an RNN cell are:
 
 - $a^{\langle t-1 \rangle}$ — shape $(n_h, 1)$ — previous hidden state
 - $x^{\langle t \rangle}$ — shape $(n_x, 1)$ — current input
-- $y^{\langle t \rangle}$ — shape $(n_y, 1)$ — output at the current time step
+- $a^{\langle t \rangle}$ — shape $(n_h, 1)$ — new hidden state
+- $y^{\langle t \rangle}$ and $\hat{y}^{\langle t \rangle}$ — shape $(n_y, 1)$ — target and prediction at the current time step
+
+The cell has three weight matrices (plus bias vectors):
+
 - $W_{aa}$ — shape $(n_h, n_h)$ — maps the previous hidden state to the new one
 - $W_{ax}$ — shape $(n_h, n_x)$ — maps the current input to the hidden state
 - $W_{ya}$ — shape $(n_y, n_h)$ — maps the hidden state to the output
+- $b_a$ — shape $(n_h, 1)$ — hidden-state bias
+- $b_y$ — shape $(n_y, 1)$ — output bias
 
 **Stacking trick:** $W_{aa}$ and $W_{ax}$ are usually combined into a single matrix $W_a$ for efficiency:
 
@@ -41,7 +48,13 @@ $$
 \begin{bmatrix} a^{\langle t-1 \rangle} \\ x^{\langle t \rangle} \end{bmatrix}
 $$
 
-So instead of computing two matrix multiplications ($W_{aa}a^{\langle t-1\rangle}$ and $W_{ax}x^{\langle t\rangle}$) and adding them, you do **one** matrix multiplication (a dot product) against the stacked vector — same result, tidier computation.
+The stacked vector has shape $(n_h+n_x, 1)$, so the multiplication is valid:
+
+$$
+(n_h, n_h+n_x)(n_h+n_x, 1)=(n_h,1).
+$$
+
+So instead of computing two matrix-vector multiplications ($W_{aa}a^{\langle t-1\rangle}$ and $W_{ax}x^{\langle t\rangle}$) and adding them, you do **one** matrix-vector multiplication against the stacked vector — same result, tidier computation.
 
 ---
 
@@ -50,10 +63,12 @@ So instead of computing two matrix multiplications ($W_{aa}a^{\langle t-1\rangle
 At every time step, the RNN cell does one simple thing: it takes the **hidden state carried over from the previous step** and the **input at the current step**, concatenates them, and pushes them through a fully-connected layer with a `tanh` activation to produce the new hidden state.
 
 ```
-                          ŷ⟨t⟩  (prediction)
-                            ↑
-                        [ softmax ]
-                            ↑
+                   ŷ⟨t⟩  (prediction)
+                     ↑
+                 [ softmax ]
+                     ↑
+       [ linear: Wya a⟨t⟩ + by ]
+                     ↑
               ┌─────────────────────────┐
    a⟨t-1⟩ ───▶│                         │───▶ a⟨t⟩
               │   concat → tanh( · )    │      │
@@ -94,10 +109,14 @@ $$
 Using the stacked-matrix trick from Section 1, this is equivalent to:
 
 $$
-a^{\langle t \rangle} = g_1\Big(W_a\big[a^{\langle t-1 \rangle},\, x^{\langle t \rangle}\big] + b_a\Big)
+a^{\langle t \rangle} = g_1\left(
+W_a
+\begin{bmatrix} a^{\langle t-1 \rangle} \\ x^{\langle t \rangle} \end{bmatrix}
++ b_a
+\right)
 $$
 
-where $\big[a^{\langle t-1 \rangle}, x^{\langle t \rangle}\big]$ is the vertical stacking described above, and the whole expression is one dot product.
+where the column vector is the vertical stacking described above.
 
 **Step 2 — Compute the prediction:**
 
@@ -109,21 +128,29 @@ $$
 - $g_1$ = `tanh` (almost always, for the hidden state)
 - $g_2$ = `sigmoid` (binary output) or `softmax` (multi-class output)
 
-**Where each matrix's shape comes from:**
-- $W_{aa}$ corresponds to the **input type** feeding into the hidden state
-- $W_{ya}$ corresponds to the **output type** produced from the hidden state
+**Shape check:**
+
+$$
+\begin{aligned}
+W_{aa}a^{\langle t-1 \rangle}&: (n_h,n_h)(n_h,1)=(n_h,1),\\
+W_{ax}x^{\langle t \rangle}&: (n_h,n_x)(n_x,1)=(n_h,1),\\
+W_{ya}a^{\langle t \rangle}&: (n_y,n_h)(n_h,1)=(n_y,1).
+\end{aligned}
+$$
+
+Thus the two terms used to form the hidden state have matching shape $(n_h,1)$, and the prediction has shape $(n_y,1)$.
 
 ---
 
 ## 4. Loss Function
 
-For a single time step, using binary cross-entropy:
+For a single binary output at one time step, use binary cross-entropy:
 
 $$
 \mathcal{L}^{\langle t \rangle}\big(\hat{y}^{\langle t \rangle}, y^{\langle t \rangle}\big) = -y^{\langle t \rangle}\log \hat{y}^{\langle t \rangle} - \big(1 - y^{\langle t \rangle}\big)\log\big(1 - \hat{y}^{\langle t \rangle}\big)
 $$
 
-The **total loss** for a sequence is just the sum of the per-time-step losses:
+For multi-class output, use categorical cross-entropy instead. The **total loss** for a sequence is the sum of the per-time-step losses:
 
 $$
 \mathcal{L} = \sum_{t=1}^{T_y} \mathcal{L}^{\langle t \rangle}\big(\hat{y}^{\langle t \rangle}, y^{\langle t \rangle}\big)
